@@ -6,7 +6,7 @@ use bind_group::BindGroups;
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
-    BindGroupLayoutDescriptor, ShaderStages,
+    BindGroupLayoutDescriptor,
 };
 
 #[derive(Error, Debug)]
@@ -78,7 +78,7 @@ impl ReflectionContext {
         Ok(Self { bind_groups })
     }
 
-    pub fn push_constant_range<'a>(&'a self) -> Option<wgpu::PushConstantRange> {
+    pub fn push_constant_range(&self) -> Option<wgpu::PushConstantRange> {
         self.bind_groups.push_constant_range.clone()
     }
 
@@ -90,10 +90,10 @@ impl ReflectionContext {
         todo!();
     }
 
-    pub fn get_bind_group_layout_descriptor<'a>(
-        &'a self,
+    pub fn get_bind_group_layout_descriptor(
+        &self,
         set: u32,
-    ) -> BindGroupLayoutDescriptor<'a> {
+    ) -> BindGroupLayoutDescriptor<'_> {
         let entries = self.bind_groups.get_bind_group_layout_entry_vector(set);
         BindGroupLayoutDescriptor {
             label: None,
@@ -101,8 +101,8 @@ impl ReflectionContext {
         }
     }
 
-    pub fn get_bind_group_layout_entry<'a>(
-        &'a self,
+    pub fn get_bind_group_layout_entry(
+        &self,
         set: u32,
         binding: u32,
     ) -> Option<wgpu::BindGroupLayoutEntry> {

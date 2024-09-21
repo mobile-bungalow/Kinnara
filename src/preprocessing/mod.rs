@@ -54,7 +54,7 @@ pub fn process<'a>(
     source: &'a wgpu::ShaderSource,
 ) -> Result<(Directives, wgpu::ShaderSource<'a>), PreprocessingError> {
     let deleteme_out = source.to_owned().clone();
-    let mut directives = Default::default();
+    let directives = Default::default();
 
     let src = match source {
         wgpu::ShaderSource::Glsl { shader, .. } => shader,
@@ -76,12 +76,11 @@ enum Directive {
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until},
-    character::complete::{alpha1, alphanumeric1, char, digit1, multispace0, one_of},
+    bytes::complete::tag,
+    character::complete::{alpha1, alphanumeric1, char, digit1},
     combinator::{map, map_res, opt, recognize},
-    multi::{many0, many1, separated_list0, separated_list1},
-    number::complete::float,
-    sequence::{delimited, pair, preceded, separated_pair, terminated, tuple},
+    multi::{many0, separated_list1},
+    sequence::{delimited, pair},
     IResult,
 };
 

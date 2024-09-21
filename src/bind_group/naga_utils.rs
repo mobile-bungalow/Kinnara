@@ -37,7 +37,9 @@ pub fn get_image_information(
         .map_err(|_| Error::NoSuchHandle)
         .ok()?;
 
-    let out = match type_actual.inner {
+    
+
+    match type_actual.inner {
         TypeInner::Image {
             class: ImageClass::Storage { format, .. },
             dim,
@@ -45,9 +47,7 @@ pub fn get_image_information(
         } => Some((texture_fmt(&format), image_dim(&dim))),
         TypeInner::BindingArray { base, .. } => get_image_information(module, base),
         _ => None,
-    };
-
-    out
+    }
 }
 
 pub fn is_image(module: &Module, ty: Handle<Type>) -> Result<bool, Error> {

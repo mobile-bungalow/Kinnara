@@ -3,7 +3,6 @@ mod naga_utils;
 use crate::preprocessing::{Directives, UniformHint};
 use thiserror::Error;
 use wgpu::{
-    core::validation::BindingLayoutSource,
     naga::{self, AddressSpace, FastHashMap, ResourceBinding, StorageAccess, TypeInner},
     BindGroupLayoutEntry, BindingType, BufferBindingType, PushConstantRange, ShaderStages,
 };
@@ -81,10 +80,10 @@ impl BindGroups {
         })
     }
 
-    pub fn get_bind_group_layout_entry_vector<'a>(
-        &'a self,
+    pub fn get_bind_group_layout_entry_vector(
+        &self,
         set: u32,
-    ) -> &'a [wgpu::BindGroupLayoutEntry] {
+    ) -> &[wgpu::BindGroupLayoutEntry] {
         self.bindings
             .get(set as usize)
             .map_or(&[], |e| e.as_slice())
@@ -214,7 +213,7 @@ fn infer_uniform_binding_type(
     uniform_hint: &UniformHint,
 ) -> BindingType {
     let min_binding_size = if uniform_hint.calculate_min_binding_size {
-        naga_utils::type_size(&module, global.ty)
+        naga_utils::type_size(module, global.ty)
     } else {
         None
     };
@@ -310,7 +309,7 @@ fn infer_handle_binding_type(
         TypeInner::BindingArray { base, .. } => {
             infer_handle_binding_type(directives, binding, module, &base)
         }
-        _ => return Err(BindGroupError::UnexpectedType),
+        _ => Err(BindGroupError::UnexpectedType),
     }
 }
 
