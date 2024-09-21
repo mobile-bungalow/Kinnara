@@ -22,6 +22,8 @@ struct EntryMetaData {
 pub struct BindGroups {
     entry_map: FastHashMap<naga::ResourceBinding, EntryMetaData>,
     bindings: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
+    // TODO: give each stage present in the pipeline it's own section of the range
+    // if the user notes it. such a small portion of the use case...
     pub push_constant_range: Option<wgpu::PushConstantRange>,
 }
 
@@ -80,13 +82,18 @@ impl BindGroups {
         })
     }
 
-    pub fn get_bind_group_layout_entry_vector(
-        &self,
-        set: u32,
-    ) -> &[wgpu::BindGroupLayoutEntry] {
+    pub fn get_bind_group_layout_entries(&self, set: u32) -> &[wgpu::BindGroupLayoutEntry] {
         self.bindings
             .get(set as usize)
             .map_or(&[], |e| e.as_slice())
+    }
+
+    pub fn bind_group_count(&self) -> usize {
+        self.entry_map
+            .keys()
+            .max_by_key(|k| k.group)
+            .map(|binding| binding.group as usize)
+            .unwrap_or(0)
     }
 
     pub fn get_bind_group_layout_entry(

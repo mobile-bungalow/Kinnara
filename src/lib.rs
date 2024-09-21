@@ -78,23 +78,46 @@ impl ReflectionContext {
         Ok(Self { bind_groups })
     }
 
+    pub fn bind_group_count(&self) -> usize {
+        self.bind_groups.bind_group_count()
+    }
+
+    //TODO: when we don't just support compute return a slice
     pub fn push_constant_range(&self) -> Option<wgpu::PushConstantRange> {
         self.bind_groups.push_constant_range.clone()
+    }
+
+    pub fn create_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
+        let push_constant_range = &self
+            .push_constant_range()
+            .map_or(vec![], |r| vec![r.clone()]);
+
+        let bind_group_layouts: Vec<_> = (0..self.bind_groups.bind_group_count())
+            .map(|set| self.create_bind_group_layout(device, set as u32))
+            .collect();
+
+        let bind_group_layouts: Vec<_> = bind_group_layouts.iter().collect();
+
+        let desc = wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: bind_group_layouts.as_slice(),
+            push_constant_ranges: push_constant_range,
+        };
+
+        device.create_pipeline_layout(&desc)
     }
 
     pub fn create_bind_group_layout(
         &self,
         device: &wgpu::Device,
         set: u32,
-    ) -> Option<wgpu::BindGroup> {
-        todo!();
+    ) -> wgpu::BindGroupLayout {
+        let layout_desc = &self.get_bind_group_layout_descriptor(set);
+        device.create_bind_group_layout(layout_desc)
     }
 
-    pub fn get_bind_group_layout_descriptor(
-        &self,
-        set: u32,
-    ) -> BindGroupLayoutDescriptor<'_> {
-        let entries = self.bind_groups.get_bind_group_layout_entry_vector(set);
+    pub fn get_bind_group_layout_descriptor(&self, set: u32) -> BindGroupLayoutDescriptor<'_> {
+        let entries = self.bind_groups.get_bind_group_layout_entries(set);
         BindGroupLayoutDescriptor {
             label: None,
             entries,

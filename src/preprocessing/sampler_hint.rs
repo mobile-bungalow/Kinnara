@@ -11,6 +11,7 @@ pub struct SamplerHint {
 impl Default for SamplerHint {
     fn default() -> Self {
         Self {
+            // TODO:  Document this behavior somewhere
             filter: wgpu::FilterMode::Nearest,
             wrap: wgpu::AddressMode::ClampToEdge,
             comparison: None,
