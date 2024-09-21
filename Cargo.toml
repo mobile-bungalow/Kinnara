@@ -1,0 +1,22 @@
+[package]
+name = "kinnara"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["glsl", "wgsl"]
+glsl = ["wgpu/glsl"]
+wgsl = ["wgpu/wgsl"]
+
+
+[dependencies.derive_more]
+version = "1.0.0"
+default-features = false
+features = ["try_into", "from"]
+
+[dependencies]
+pollster = "0.3.0"
+wgpu = "22.1.0"
+thiserror = "1.0.63"
+struct-patch = "0.8.4"
+nom = "7.1.3"
