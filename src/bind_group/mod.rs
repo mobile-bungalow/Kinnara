@@ -1,6 +1,7 @@
 mod naga_utils;
 
 use crate::preprocessing::{Directives, UniformHint};
+use naga_utils::sample_kind;
 use thiserror::Error;
 use wgpu::{
     naga::{self, AddressSpace, FastHashMap, ResourceBinding, StorageAccess, TypeInner},
@@ -86,6 +87,10 @@ impl BindGroups {
         self.bindings
             .get(set as usize)
             .map_or(&[], |e| e.as_slice())
+    }
+
+    pub fn bind_group_entries_count(&self, set: u32) -> usize {
+        self.bindings.get(set as usize).map_or(0, |s| s.len())
     }
 
     pub fn bind_group_count(&self) -> usize {
@@ -308,11 +313,23 @@ fn infer_handle_binding_type(
                 }
             }
         }
-        TypeInner::Image { dim, class, .. } => Ok(BindingType::Texture {
-            view_dimension: naga_utils::image_dim(&dim),
-            sample_type: naga_utils::sample_kind(&class),
-            multisampled: matches!(class, naga::ImageClass::Sampled { multi: true, .. }),
-        }),
+        TypeInner::Image { dim, class, .. } => match class {
+            naga::ImageClass::Sampled { kind, multi } => Ok(BindingType::Texture {
+                view_dimension: naga_utils::image_dim(&dim),
+                sample_type: sample_kind(&kind),
+                multisampled: multi,
+            }),
+            naga::ImageClass::Depth { multi } => Ok(BindingType::Texture {
+                view_dimension: naga_utils::image_dim(&dim),
+                sample_type: wgpu::TextureSampleType::Depth,
+                multisampled: multi,
+            }),
+            naga::ImageClass::Storage { format, access } => Ok(BindingType::StorageTexture {
+                access: naga_utils::storage_access(&access),
+                format: naga_utils::texture_fmt(&format),
+                view_dimension: naga_utils::image_dim(&dim),
+            }),
+        },
         TypeInner::BindingArray { base, .. } => {
             infer_handle_binding_type(directives, binding, module, &base)
         }

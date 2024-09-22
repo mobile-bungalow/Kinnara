@@ -5,6 +5,8 @@
 #pragma bool bool_2_name = false
 #pragma vec2 point : range([-1.0, -1.0]..[1.0, 1.0]) = [0.0, 0.0]
 
+#pragma label "Base Label"
+
 // sampler binding type is inferred from filter
 // nearest = 0 / Nonfiltering
 #pragma sampler samp (filter=Linear, wrap=ClampToEdge)

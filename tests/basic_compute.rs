@@ -27,7 +27,7 @@ void main() {}
 #[test]
 fn basic_reflection() {
     let source = compute_stage(BASIC_SRC);
-    let refl = ReflectionContext::new_compute_reflector(source).unwrap();
+    let refl = ReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -81,7 +81,7 @@ void main() {}
 #[test]
 fn storage_buffer_reflection() {
     let source = compute_stage(STORAGE_BUFFER_SRC);
-    let refl = ReflectionContext::new_compute_reflector(source).unwrap();
+    let refl = ReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -123,7 +123,7 @@ void main() {}
 #[test]
 fn multiple_bindings_reflection() {
     let source = compute_stage(MULTIPLE_BINDINGS_SRC);
-    let refl = ReflectionContext::new_compute_reflector(source).unwrap();
+    let refl = ReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -181,4 +181,143 @@ fn multiple_bindings_reflection() {
 
     let pc_range = refl.push_constant_range();
     assert!(pc_range.is_none());
+}
+
+const STORAGE_TEXTURE_SRC: &str = r"
+#version 450
+layout(set=0, binding=0, rgba8) writeonly uniform image2D writeOnlyImage;
+layout(set=0, binding=1, r32f)  readonly uniform image2D readOnlyImage;
+layout(set=0, binding=2, rgba32f) uniform image2D readWriteImage;
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+void main() {}
+";
+
+#[test]
+fn storage_texture_reflection() {
+    let source = compute_stage(STORAGE_TEXTURE_SRC);
+    let refl = ReflectionContext::new_compute(source).unwrap();
+
+    let binding_0 = wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        count: None,
+    };
+
+    let binding_1 = wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::ReadOnly,
+            format: wgpu::TextureFormat::R32Float,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        count: None,
+    };
+
+    let binding_2 = wgpu::BindGroupLayoutEntry {
+        binding: 2,
+        visibility: ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::ReadWrite,
+            format: wgpu::TextureFormat::Rgba32Float,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        count: None,
+    };
+
+    let desc_0 = refl.get_bind_group_layout_entry(0, 0).unwrap();
+    let desc_1 = refl.get_bind_group_layout_entry(0, 1).unwrap();
+    let desc_2 = refl.get_bind_group_layout_entry(0, 2).unwrap();
+
+    assert_eq!(binding_0, desc_0);
+    assert_eq!(binding_1, desc_1);
+    assert_eq!(binding_2, desc_2);
+
+    let bind_group = refl.get_bind_group_layout_descriptor(0);
+    let reference = BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[binding_0, binding_1, binding_2],
+    };
+
+    assert_eq!(bind_group.entries, reference.entries);
+}
+const STORAGE_BUFFER_TEST_SRC: &str = r#"
+#version 450
+
+struct InputData {
+    float values[4];
+};
+
+struct OutputData {
+    vec4 results[2];
+};
+
+layout(set = 0, binding = 0) readonly buffer InputBuffer {
+    InputData inputs[];
+} input_buf;
+
+layout(set = 0, binding = 1) buffer OutputBuffer {
+    OutputData outputs[];
+} output_buf;
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
+void main() {}
+"#;
+
+#[test]
+fn storage_buffer_reflection_test() {
+    let source = ShaderSource::Glsl {
+        shader: STORAGE_BUFFER_TEST_SRC.into(),
+        stage: wgpu::naga::ShaderStage::Compute,
+        defines: Default::default(),
+    };
+
+    let refl = ReflectionContext::new_compute(source).unwrap();
+
+    let input_binding = wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+
+    let output_binding = wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+
+    let desc_0 = refl.get_bind_group_layout_entry(0, 0).unwrap();
+    let desc_1 = refl.get_bind_group_layout_entry(0, 1).unwrap();
+
+    assert_eq!(input_binding, desc_0, "Input buffer binding mismatch");
+    assert_eq!(output_binding, desc_1, "Output buffer binding mismatch");
+
+    let bind_group = refl.get_bind_group_layout_descriptor(0);
+    let reference = BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[input_binding, output_binding],
+    };
+
+    assert_eq!(
+        bind_group.entries, reference.entries,
+        "Bind group layout mismatch"
+    );
+
+    let pc_range = refl.push_constant_range();
+    assert!(pc_range.is_none(), "Unexpected push constant range");
 }

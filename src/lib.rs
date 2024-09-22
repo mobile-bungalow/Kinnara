@@ -3,10 +3,13 @@ mod device_utils;
 mod preprocessing;
 
 use bind_group::BindGroups;
+use device_utils::DeviceUtils;
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
-    BindGroupLayoutDescriptor,
+    BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor, ErrorFilter,
+    PipelineCache, PipelineCacheDescriptor, PipelineCompilationOptions, ShaderModuleDescriptor,
+    ShaderSource,
 };
 
 #[derive(Error, Debug)]
@@ -40,17 +43,17 @@ impl From<wgpu::Error> for Error {
 }
 
 /// A structure holding user enriched reflection info and book keeping
-/// utilities on a given Shader, derived from it's source.
+/// utilities on a given shader, derived from it's source.
 pub struct ReflectionContext {
-    pub bind_groups: BindGroups,
+    bind_groups: BindGroups,
+    naga_mod: wgpu::naga::Module,
+    pub build_cache: Option<PipelineCache>,
 }
 
+// TODO: this should mostly be shared behavior
+// between two wrapper structs ComputeReflector and RenderReflector.
 impl ReflectionContext {
-    //pub fn new_pixel_reflector(frag: &wgpu::naga::Module, vert: &wgpu::naga::Module) -> Result<Self, Error> {
-    //    Ok(Self {})
-    //}
-
-    pub fn new_compute_reflector(source: wgpu::ShaderSource) -> Result<Self, Error> {
+    pub fn new_compute(source: wgpu::ShaderSource) -> Result<Self, Error> {
         let (directives, modified_source) = preprocessing::process(&source)?;
 
         let naga_mod = match modified_source {
@@ -75,11 +78,11 @@ impl ReflectionContext {
 
         let bind_groups = BindGroups::new(&naga_mod, &directives)?;
 
-        Ok(Self { bind_groups })
-    }
-
-    pub fn bind_group_count(&self) -> usize {
-        self.bind_groups.bind_group_count()
+        Ok(Self {
+            bind_groups,
+            naga_mod,
+            build_cache: None,
+        })
     }
 
     //TODO: when we don't just support compute return a slice
@@ -87,12 +90,57 @@ impl ReflectionContext {
         self.bind_groups.push_constant_range.clone()
     }
 
+    // TODO: move this into a parent struct
+    pub fn create_compute_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        entry_point: &str,
+        options: wgpu::PipelineCompilationOptions,
+    ) -> Result<ComputePipeline, Error> {
+        let module_desc = ShaderModuleDescriptor {
+            label: None,
+            source: ShaderSource::Naga(std::borrow::Cow::Owned(self.naga_mod.clone())),
+        };
+
+        let is_cache_capable = device.features().contains(wgpu::Features::PIPELINE_CACHE);
+
+        if is_cache_capable && self.build_cache.is_none() {
+            let desc = wgpu::PipelineCacheDescriptor {
+                label: None,
+                data: None,
+                fallback: true,
+            };
+            unsafe {
+                self.build_cache = Some(device.create_pipeline_cache(&desc));
+            }
+        }
+
+        let layout = self.create_pipeline_layout(device);
+
+        device
+            .wgpu_try(ErrorFilter::Validation, |dev| {
+                let module = dev.create_shader_module(module_desc);
+                let pipeline_desc = ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(&layout),
+                    module: &module,
+                    entry_point,
+                    compilation_options: options,
+                    cache: self.build_cache.as_ref(),
+                };
+
+                dev.create_compute_pipeline(&pipeline_desc)
+            })
+            .map_err(Error::from)
+    }
+
     pub fn create_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
         let push_constant_range = &self
             .push_constant_range()
             .map_or(vec![], |r| vec![r.clone()]);
 
-        let bind_group_layouts: Vec<_> = (0..self.bind_groups.bind_group_count())
+        let bind_groups_ct = self.bind_groups.bind_group_count();
+        let bind_group_layouts: Vec<_> = (0..bind_groups_ct)
             .map(|set| self.create_bind_group_layout(device, set as u32))
             .collect();
 
@@ -105,6 +153,10 @@ impl ReflectionContext {
         };
 
         device.create_pipeline_layout(&desc)
+    }
+
+    pub fn bind_group_count(&self) -> usize {
+        self.bind_groups.bind_group_count()
     }
 
     pub fn create_bind_group_layout(
@@ -122,6 +174,10 @@ impl ReflectionContext {
             label: None,
             entries,
         }
+    }
+
+    pub fn bind_group_entries_count(&self, set: u32) -> usize {
+        self.bind_groups.bind_group_entries_count(set)
     }
 
     pub fn get_bind_group_layout_entry(

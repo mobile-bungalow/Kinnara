@@ -37,8 +37,6 @@ pub fn get_image_information(
         .map_err(|_| Error::NoSuchHandle)
         .ok()?;
 
-    
-
     match type_actual.inner {
         TypeInner::Image {
             class: ImageClass::Storage { format, .. },
@@ -75,21 +73,14 @@ pub fn storage_access(access: &naga::StorageAccess) -> wgpu::StorageTextureAcces
     }
 }
 
-pub fn sample_kind(class: &naga::ImageClass) -> wgpu::TextureSampleType {
-    match class {
-        ImageClass::Sampled { kind, .. } => match kind {
-            naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
-            naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
-            // TODO:error out here, f32 textures shouldn't be filterable
-            naga::ScalarKind::Float => wgpu::TextureSampleType::Float { filterable: true },
-            naga::ScalarKind::Bool => wgpu::TextureSampleType::Uint,
-            // TODO: error out here
-            ScalarKind::AbstractInt => todo!(),
-            ScalarKind::AbstractFloat => todo!(),
-        },
-        ImageClass::Depth { .. } => wgpu::TextureSampleType::Depth,
-        // TODO: return error
-        ImageClass::Storage { .. } => unreachable!(),
+pub fn sample_kind(kind: &naga::ScalarKind) -> wgpu::TextureSampleType {
+    match kind {
+        naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
+        naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
+        // TODO:error out here, f32 textures shouldn't be filterable
+        naga::ScalarKind::Float => wgpu::TextureSampleType::Float { filterable: true },
+        naga::ScalarKind::Bool => wgpu::TextureSampleType::Uint,
+        ScalarKind::AbstractFloat | ScalarKind::AbstractInt => unreachable!(),
     }
 }
 
