@@ -12,7 +12,7 @@ impl DeviceUtils for wgpu::Device {
         F: FnOnce(&wgpu::Device) -> T,
     {
         self.push_error_scope(filter);
-        let result = func(&self);
+        let result = func(self);
         match self.pop_error_scope().block_on() {
             Some(error) => Err(error),
             None => Ok(result),

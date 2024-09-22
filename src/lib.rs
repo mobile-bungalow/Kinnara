@@ -8,7 +8,7 @@ use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor, ErrorFilter,
-    PipelineCache, PipelineCacheDescriptor, PipelineCompilationOptions, ShaderModuleDescriptor,
+    PipelineCache, ShaderModuleDescriptor,
     ShaderSource,
 };
 
