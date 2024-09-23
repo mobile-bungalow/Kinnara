@@ -69,7 +69,7 @@ impl BindGroups {
         for ep in module.entry_points.iter() {
             // TODO: in the future, we should try to infer visibility from usage
             // and hints, for now it will be all or nothing
-            let visibility = match ep.stage {
+            match ep.stage {
                 naga::ShaderStage::Vertex => visibility |= ShaderStages::VERTEX,
                 naga::ShaderStage::Fragment => visibility |= ShaderStages::FRAGMENT,
                 naga::ShaderStage::Compute => visibility |= ShaderStages::COMPUTE,

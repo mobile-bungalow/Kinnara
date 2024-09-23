@@ -32,11 +32,10 @@ fn addition() -> Result<(), kinnara::Error> {
     let length = 1048576;
     let add = 5.0f32;
     let data: Vec<_> = (0..length)
-        .map(|i| (i as f32).to_le_bytes())
-        .flatten()
+        .flat_map(|i| (i as f32).to_le_bytes())
         .collect();
 
-    let ref buffer = device.create_buffer_init(&BufferInitDescriptor {
+    let buffer = &device.create_buffer_init(&BufferInitDescriptor {
         label: None,
         // TODO: reflector should be able to provide minimum viable flags
         usage: BufferUsages::UNIFORM
