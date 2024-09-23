@@ -2,6 +2,7 @@ use std::num::NonZeroU32;
 
 use wgpu::{BindGroupLayoutEntry, BindingResource};
 
+// TODO: make these entries macros,
 #[derive(Debug)]
 pub enum BindSlot<'a> {
     StorageBuffer {
