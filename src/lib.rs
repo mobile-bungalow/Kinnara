@@ -2,12 +2,15 @@ mod bind_group;
 mod preprocessing;
 mod wgpu_utils;
 
+use std::marker::PhantomData;
+
+pub use bind_group::requirements::BindSlot;
 use bind_group::BindGroups;
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
-    BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor, ErrorFilter,
-    PipelineCache, ShaderModuleDescriptor, ShaderSource,
+    BindGroupEntry, BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor,
+    ErrorFilter, PipelineCache, ShaderModuleDescriptor, ShaderSource,
 };
 pub use wgpu_utils::DeviceUtils;
 
@@ -38,6 +41,37 @@ impl From<wgpu::Error> for Error {
             wgpu::Error::Validation { description, .. } => Error::Validation(description),
             wgpu::Error::Internal { description, .. } => Error::Wgpu(description),
         }
+    }
+}
+
+// TODO: trait bounds on the push constant type
+// TODO: trait bounds on binding type
+pub struct RailedComputePipeline<PC = (), BT = ()> {
+    pipeline: wgpu::ComputePipeline,
+    bind_groups: Vec<wgpu::BindGroup>,
+    reflection_ctx: ComputeReflectionContext,
+    push_constants: Option<PC>,
+    binding_type: PhantomData<BT>,
+}
+
+impl RailedComputePipeline {
+    pub fn set_up<'a, F>(
+        entry_point: &str,
+        context: ComputeReflectionContext,
+        bind_func: F,
+    ) -> Result<Self, Error>
+    where
+        F: FnMut(u32, &mut bind_group::requirements::BindSlot<'a>),
+    {
+        todo!("build out the railed usage.")
+    }
+
+    pub fn rebind() {
+        todo!()
+    }
+
+    pub fn create_compute_pass() {
+        todo!()
     }
 }
 
@@ -95,10 +129,49 @@ impl ComputeReflectionContext {
         self.bind_groups.push_constant_range.clone()
     }
 
+    /// TODO: document the shit out of this, it's fairly opaque
+    /// essentially it expects you to write a map function which takes a set
+    /// of required bindings, then fullfills them, it returns none if you fail.
+    /// TODO: this should return a result describing EXACTLY what went wrong
+    pub fn create_bind_group<'a, F>(
+        &self,
+        device: &wgpu::Device,
+        set: u32,
+        mut func: F,
+    ) -> Option<wgpu::BindGroup>
+    where
+        F: FnMut(&mut bind_group::requirements::BindSlot<'a>),
+    {
+        let layout = self.create_bind_group_layout(device, set);
+
+        let entries = self
+            .bind_groups
+            .get_bind_group_layout_entries(set)
+            .iter()
+            .map(|entry| {
+                let mut req = BindSlot::from_entry(entry);
+                func(&mut req);
+                let resource = wgpu::BindingResource::try_from(req).ok()?;
+                Some(BindGroupEntry {
+                    binding: entry.binding,
+                    resource,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        let desc = wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &layout,
+            entries: entries.as_slice(),
+        };
+
+        Some(device.create_bind_group(&desc))
+    }
+
     pub fn create_compute_pipeline(
         &mut self,
-        device: &wgpu::Device,
         entry_point: &str,
+        device: &wgpu::Device,
         options: wgpu::PipelineCompilationOptions,
     ) -> Result<ComputePipeline, Error> {
         let module_desc = ShaderModuleDescriptor {

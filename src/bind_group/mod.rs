@@ -1,4 +1,5 @@
 mod naga_utils;
+pub mod requirements;
 
 use crate::preprocessing::{Directives, UniformHint};
 use naga_utils::sample_kind;
@@ -52,6 +53,8 @@ pub enum BindGroupError {
     NoEntryPoint,
     #[error("Multiple Entry points in module")]
     TooManyEntryPoints,
+    #[error("Missing Bind Group Entry {0}")]
+    MissingBindGroupEntry(u32),
 }
 
 impl BindGroups {
