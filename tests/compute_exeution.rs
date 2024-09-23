@@ -1,4 +1,4 @@
-use kinnara::{ComputeReflectionContext, DeviceUtils, RailedComputePipeline};
+use kinnara::{ComputeReflectionContext, DeviceUtils};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::BufferUsages;
 
@@ -45,11 +45,8 @@ fn addition() -> Result<(), kinnara::Error> {
     });
 
     let bind_group = refl
-        .create_bind_group(&device, 0, |req| match req {
-            kinnara::BindSlot::StorageBuffer { binding: 0, slot } => {
-                slot.replace(buffer.as_entire_buffer_binding());
-            }
-            _ => {}
+        .create_bind_group(&device, 0, |req| if let kinnara::BindSlot::StorageBuffer { binding: 0, slot } = req {
+            slot.replace(buffer.as_entire_buffer_binding());
         })
         .unwrap();
 
