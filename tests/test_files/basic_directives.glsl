@@ -16,12 +16,9 @@
 
 // dynamic offset will force you to provide dynamic offset
 // during a render call
-#pragma uniform uni_name (dynamic_offset=true, min_size=10)
+#pragma uniform uni_name (dynamic_offset=true, calculate_min_size=true)
 
 #pragma texture multisampled (sample_count=2)
-
-// provides a count, this should apply to EVERY pragma at uniform level
-#pragma texture array_tex[4]
 
 // global options
 #pragma default uniform (calculate_size=true)

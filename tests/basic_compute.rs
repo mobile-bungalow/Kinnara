@@ -27,7 +27,7 @@ void main() {}
 #[test]
 fn basic_reflection() {
     let source = compute_stage(BASIC_SRC);
-    let refl = ReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -81,7 +81,7 @@ void main() {}
 #[test]
 fn storage_buffer_reflection() {
     let source = compute_stage(STORAGE_BUFFER_SRC);
-    let refl = ReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -123,7 +123,7 @@ void main() {}
 #[test]
 fn multiple_bindings_reflection() {
     let source = compute_stage(MULTIPLE_BINDINGS_SRC);
-    let refl = ReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -195,7 +195,7 @@ void main() {}
 #[test]
 fn storage_texture_reflection() {
     let source = compute_stage(STORAGE_TEXTURE_SRC);
-    let refl = ReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflectionContext::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -271,13 +271,9 @@ void main() {}
 
 #[test]
 fn storage_buffer_reflection_test() {
-    let source = ShaderSource::Glsl {
-        shader: STORAGE_BUFFER_TEST_SRC.into(),
-        stage: wgpu::naga::ShaderStage::Compute,
-        defines: Default::default(),
-    };
+    let source = compute_stage(STORAGE_BUFFER_TEST_SRC);
 
-    let refl = ReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflectionContext::new_compute(source).unwrap();
 
     let input_binding = wgpu::BindGroupLayoutEntry {
         binding: 0,

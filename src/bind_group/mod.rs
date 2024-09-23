@@ -4,7 +4,9 @@ use crate::preprocessing::{Directives, UniformHint};
 use naga_utils::sample_kind;
 use thiserror::Error;
 use wgpu::{
-    naga::{self, AddressSpace, FastHashMap, ResourceBinding, StorageAccess, TypeInner},
+    naga::{
+        self, AddressSpace, FastHashMap, ResourceBinding, ShaderStage, StorageAccess, TypeInner,
+    },
     BindGroupLayoutEntry, BindingType, BufferBindingType, PushConstantRange, ShaderStages,
 };
 
@@ -20,8 +22,14 @@ struct EntryMetaData {
     name: Option<String>,
 }
 
+struct EntryPointMetaData {
+    stage: ShaderStage,
+    work_groups: Option<[u32; 3]>,
+}
+
 pub struct BindGroups {
     entry_map: FastHashMap<naga::ResourceBinding, EntryMetaData>,
+    entry_points: FastHashMap<String, EntryPointMetaData>,
     bindings: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
     // TODO: give each stage present in the pipeline it's own section of the range
     // if the user notes it. such a small portion of the use case...
@@ -48,23 +56,38 @@ pub enum BindGroupError {
 
 impl BindGroups {
     pub fn new(module: &naga::Module, directives: &Directives) -> Result<Self, BindGroupError> {
-        let stage = match module.entry_points.as_slice() {
-            [single_ep] => single_ep.stage,
-            [] => return Err(BindGroupError::NoEntryPoint),
-            [..] => return Err(BindGroupError::TooManyEntryPoints),
+        if module.entry_points.is_empty() {
+            return Err(BindGroupError::NoEntryPoint);
         };
 
-        // TODO: in the future, we should try to infer visibility from usage
-        // and hints, for now it will be all or nothing
-        let visibility = match stage {
-            naga::ShaderStage::Vertex => ShaderStages::VERTEX_FRAGMENT,
-            naga::ShaderStage::Fragment => ShaderStages::VERTEX_FRAGMENT,
-            naga::ShaderStage::Compute => ShaderStages::COMPUTE,
-        };
-
+        let mut visibility = ShaderStages::NONE;
+        let mut entry_points = FastHashMap::default();
         let mut entry_map = FastHashMap::default();
         let mut bindings = Vec::new();
         let mut push_constant_range = None;
+
+        for ep in module.entry_points.iter() {
+            // TODO: in the future, we should try to infer visibility from usage
+            // and hints, for now it will be all or nothing
+            let visibility = match ep.stage {
+                naga::ShaderStage::Vertex => visibility |= ShaderStages::VERTEX,
+                naga::ShaderStage::Fragment => visibility |= ShaderStages::FRAGMENT,
+                naga::ShaderStage::Compute => visibility |= ShaderStages::COMPUTE,
+            };
+
+            let work_groups = if ep.workgroup_size.contains(&0) {
+                None
+            } else {
+                Some(ep.workgroup_size)
+            };
+
+            let ep_meta = EntryPointMetaData {
+                stage: ep.stage,
+                work_groups,
+            };
+
+            entry_points.insert(ep.name.clone(), ep_meta);
+        }
 
         for (_, global) in module.global_variables.iter() {
             match GlobalVar::process_global_var(directives, module, global, visibility)? {
@@ -79,8 +102,19 @@ impl BindGroups {
         Ok(Self {
             bindings,
             entry_map,
+            entry_points,
             push_constant_range,
         })
+    }
+
+    pub fn entry_points(&self) -> impl Iterator<Item = &String> {
+        self.entry_points.keys()
+    }
+
+    pub fn work_group_size(&self, entry_point: &str) -> Option<[u32; 3]> {
+        self.entry_points
+            .get(entry_point)
+            .and_then(|ep| ep.work_groups)
     }
 
     pub fn get_bind_group_layout_entries(&self, set: u32) -> &[wgpu::BindGroupLayoutEntry] {

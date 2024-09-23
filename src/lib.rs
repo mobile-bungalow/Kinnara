@@ -1,16 +1,15 @@
 mod bind_group;
-mod device_utils;
 mod preprocessing;
+mod wgpu_utils;
 
 use bind_group::BindGroups;
-use device_utils::DeviceUtils;
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor, ErrorFilter,
-    PipelineCache, ShaderModuleDescriptor,
-    ShaderSource,
+    PipelineCache, ShaderModuleDescriptor, ShaderSource,
 };
+pub use wgpu_utils::DeviceUtils;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -44,15 +43,14 @@ impl From<wgpu::Error> for Error {
 
 /// A structure holding user enriched reflection info and book keeping
 /// utilities on a given shader, derived from it's source.
-pub struct ReflectionContext {
+pub struct ComputeReflectionContext {
     bind_groups: BindGroups,
     naga_mod: wgpu::naga::Module,
     pub build_cache: Option<PipelineCache>,
 }
 
-// TODO: this should mostly be shared behavior
-// between two wrapper structs ComputeReflector and RenderReflector.
-impl ReflectionContext {
+// TODO: Add Pixel reflection context
+impl ComputeReflectionContext {
     pub fn new_compute(source: wgpu::ShaderSource) -> Result<Self, Error> {
         let (directives, modified_source) = preprocessing::process(&source)?;
 
@@ -85,12 +83,18 @@ impl ReflectionContext {
         })
     }
 
-    //TODO: when we don't just support compute return a slice
+    pub fn work_group_size(&self, entry_point: &str) -> Option<[u32; 3]> {
+        self.bind_groups.work_group_size(entry_point)
+    }
+
+    pub fn entry_points(&self) -> impl Iterator<Item = &String> {
+        self.bind_groups.entry_points()
+    }
+
     pub fn push_constant_range(&self) -> Option<wgpu::PushConstantRange> {
         self.bind_groups.push_constant_range.clone()
     }
 
-    // TODO: move this into a parent struct
     pub fn create_compute_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -140,7 +144,7 @@ impl ReflectionContext {
             .map_or(vec![], |r| vec![r.clone()]);
 
         let bind_groups_ct = self.bind_groups.bind_group_count();
-        let bind_group_layouts: Vec<_> = (0..bind_groups_ct)
+        let bind_group_layouts: Vec<_> = (0..=bind_groups_ct)
             .map(|set| self.create_bind_group_layout(device, set as u32))
             .collect();
 
