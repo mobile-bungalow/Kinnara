@@ -17,24 +17,27 @@ pub struct BindingInfo {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 struct EntryMetaData {
     set_idx: usize,
     entry_idx: usize,
     name: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 struct EntryPointMetaData {
     stage: ShaderStage,
     work_groups: Option<[u32; 3]>,
 }
 
+#[derive(Debug, Clone)]
 pub struct BindGroups {
     entry_map: FastHashMap<naga::ResourceBinding, EntryMetaData>,
     entry_points: FastHashMap<String, EntryPointMetaData>,
     bindings: Vec<Vec<wgpu::BindGroupLayoutEntry>>,
     // TODO: give each stage present in the pipeline it's own section of the range
     // if the user notes it. such a small portion of the use case...
-    pub push_constant_range: Option<wgpu::PushConstantRange>,
+    pub push_constant_range: Option<Vec<wgpu::PushConstantRange>>,
 }
 
 #[derive(Debug, Error)]
@@ -53,8 +56,8 @@ pub enum BindGroupError {
     NoEntryPoint,
     #[error("Multiple Entry points in module")]
     TooManyEntryPoints,
-    #[error("Missing Bind Group Entry {0}")]
-    MissingBindGroupEntry(u32),
+    #[error("Missing Bind Group Entry - Set: {0} Binding: {1}")]
+    MissingBindGroupEntry(u32, u32),
 }
 
 impl BindGroups {
@@ -67,7 +70,7 @@ impl BindGroups {
         let mut entry_points = FastHashMap::default();
         let mut entry_map = FastHashMap::default();
         let mut bindings = Vec::new();
-        let mut push_constant_range = None;
+        let mut push_constant_range: Option<Vec<_>> = None;
 
         for ep in module.entry_points.iter() {
             // TODO: in the future, we should try to infer visibility from usage
@@ -94,7 +97,10 @@ impl BindGroups {
 
         for (_, global) in module.global_variables.iter() {
             match GlobalVar::process_global_var(directives, module, global, visibility)? {
-                Some(GlobalVar::PushConstant(pc)) => push_constant_range = Some(pc),
+                Some(GlobalVar::PushConstant(pc)) => match push_constant_range.as_mut() {
+                    Some(v) => v.push(pc),
+                    None => push_constant_range = Some(vec![pc]),
+                },
                 Some(GlobalVar::Uniform(uniform)) => {
                     update_entry_map(uniform, &mut bindings, &mut entry_map)
                 }
@@ -136,6 +142,17 @@ impl BindGroups {
             .max_by_key(|k| k.group)
             .map(|binding| binding.group as usize)
             .unwrap_or(0)
+    }
+
+    pub fn iter_bind_group_entries(
+        &self,
+        set: u32,
+    ) -> impl Iterator<Item = &wgpu::BindGroupLayoutEntry> {
+        self.bindings
+            .get(set as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
     }
 
     pub fn get_bind_group_layout_entry(

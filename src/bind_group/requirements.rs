@@ -1,44 +1,55 @@
 use std::num::NonZeroU32;
 
+use std::cell::RefCell;
 use wgpu::{BindGroupLayoutEntry, BindingResource};
 
-// TODO: make these entries macros,
+pub enum PassSlot<'a> {
+    DynamicOffset {
+        loc: (u32, u32),
+        offset: RefCell<Option<u32>>,
+    },
+    PushConstantRange {
+        range: std::ops::Range<u32>,
+        buffer: RefCell<Option<&'a [u8]>>,
+    },
+}
+
 #[derive(Debug)]
 pub enum BindSlot<'a> {
     StorageBuffer {
-        binding: u32,
-        slot: Option<wgpu::BufferBinding<'a>>,
+        loc: (u32, u32),
+        slot: RefCell<Option<wgpu::BufferBinding<'a>>>,
     },
     UniformBuffer {
-        binding: u32,
-        slot: Option<wgpu::BufferBinding<'a>>,
+        loc: (u32, u32),
+        slot: RefCell<Option<wgpu::BufferBinding<'a>>>,
     },
     StorageBufferArray {
-        binding: u32,
-        slots: Option<&'a [wgpu::BufferBinding<'a>]>,
+        loc: (u32, u32),
+        slots: RefCell<Option<&'a [wgpu::BufferBinding<'a>]>>,
         entry_count: u32,
     },
     UniformBufferArray {
-        binding: u32,
-        slots: Option<&'a [wgpu::BufferBinding<'a>]>,
+        loc: (u32, u32),
+        slots: RefCell<Option<&'a [wgpu::BufferBinding<'a>]>>,
         entry_count: u32,
     },
     Texture {
-        binding: u32,
-        slot: Option<&'a wgpu::TextureView>,
+        loc: (u32, u32),
+        slot: RefCell<Option<&'a wgpu::TextureView>>,
     },
     TextureArray {
-        binding: u32,
-        slots: Option<&'a [&'a wgpu::TextureView]>,
+        loc: (u32, u32),
+        slots: RefCell<Option<&'a [&'a wgpu::TextureView]>>,
         entry_count: u32,
     },
     Sampler {
-        binding: u32,
-        slot: Option<&'a wgpu::Sampler>,
+        loc: (u32, u32),
+        slot: RefCell<Option<&'a wgpu::Sampler>>,
     },
     SamplerArray {
-        binding: u32,
-        slots: Option<&'a [&'a wgpu::Sampler]>,
+        loc: (u32, u32),
+        slots: RefCell<Option<&'a [&'a wgpu::Sampler]>>,
         entry_count: u32,
     },
 }
@@ -46,16 +57,16 @@ pub enum BindSlot<'a> {
 macro_rules! create_bind_slot {
     ($fn_name:ident, $single:ident, $array:ident) => {
         #[inline(always)]
-        fn $fn_name(set: u32, ct: &Option<NonZeroU32>) -> Self {
+        fn $fn_name(set: u32, binding: u32, ct: &Option<NonZeroU32>) -> Self {
             match ct {
                 Some(ct) => Self::$array {
-                    binding: set,
-                    slots: None,
+                    loc: (set, binding),
+                    slots: None.into(),
                     entry_count: ct.get(),
                 },
                 None => Self::$single {
-                    binding: set,
-                    slot: None,
+                    loc: (set, binding),
+                    slot: None.into(),
                 },
             }
         }
@@ -63,19 +74,19 @@ macro_rules! create_bind_slot {
 }
 
 impl<'a> BindSlot<'a> {
-    pub fn from_entry(entry: &BindGroupLayoutEntry) -> Self {
+    pub fn from_entry(set: u32, entry: &BindGroupLayoutEntry) -> Self {
         let BindGroupLayoutEntry {
             binding, ty, count, ..
         } = entry;
 
         match ty {
             wgpu::BindingType::Buffer { ty, .. } => match ty {
-                wgpu::BufferBindingType::Uniform => Self::uniform_buf(*binding, count),
-                wgpu::BufferBindingType::Storage { .. } => Self::storage_buf(*binding, count),
+                wgpu::BufferBindingType::Uniform => Self::uniform_buf(set, *binding, count),
+                wgpu::BufferBindingType::Storage { .. } => Self::storage_buf(set, *binding, count),
             },
-            wgpu::BindingType::Sampler(_) => Self::sampler(*binding, count),
-            wgpu::BindingType::Texture { .. } => Self::texture(*binding, count),
-            wgpu::BindingType::StorageTexture { .. } => Self::texture(*binding, count),
+            wgpu::BindingType::Sampler(_) => Self::sampler(set, *binding, count),
+            wgpu::BindingType::Texture { .. } => Self::texture(set, *binding, count),
+            wgpu::BindingType::StorageTexture { .. } => Self::texture(set, *binding, count),
             wgpu::BindingType::AccelerationStructure => {
                 todo!("I'm not sure if these are widely supported.")
             }
@@ -89,27 +100,29 @@ impl<'a> BindSlot<'a> {
 
     pub fn binding(&self) -> u32 {
         match self {
-            Self::StorageBuffer { binding, .. }
-            | Self::UniformBuffer { binding, .. }
-            | Self::Texture { binding, .. }
-            | Self::Sampler { binding, .. }
-            | Self::StorageBufferArray { binding, .. }
-            | Self::UniformBufferArray { binding, .. }
-            | Self::TextureArray { binding, .. }
-            | Self::SamplerArray { binding, .. } => *binding,
+            Self::StorageBuffer { loc, .. }
+            | Self::UniformBuffer { loc, .. }
+            | Self::Texture { loc, .. }
+            | Self::Sampler { loc, .. }
+            | Self::StorageBufferArray { loc, .. }
+            | Self::UniformBufferArray { loc, .. }
+            | Self::TextureArray { loc, .. }
+            | Self::SamplerArray { loc, .. } => loc.1,
         }
     }
 
     pub fn is_some(&self) -> bool {
         match self {
-            Self::StorageBuffer { slot, .. } | Self::UniformBuffer { slot, .. } => slot.is_some(),
-            Self::Texture { slot, .. } => slot.is_some(),
-            Self::Sampler { slot, .. } => slot.is_some(),
-            Self::StorageBufferArray { slots, .. } | Self::UniformBufferArray { slots, .. } => {
-                slots.is_some()
+            Self::StorageBuffer { slot, .. } | Self::UniformBuffer { slot, .. } => {
+                slot.borrow().is_some()
             }
-            Self::TextureArray { slots, .. } => slots.is_some(),
-            Self::SamplerArray { slots, .. } => slots.is_some(),
+            Self::Texture { slot, .. } => slot.borrow().is_some(),
+            Self::Sampler { slot, .. } => slot.borrow().is_some(),
+            Self::StorageBufferArray { slots, .. } | Self::UniformBufferArray { slots, .. } => {
+                slots.borrow().is_some()
+            }
+            Self::TextureArray { slots, .. } => slots.borrow().is_some(),
+            Self::SamplerArray { slots, .. } => slots.borrow().is_some(),
         }
     }
 }
@@ -120,33 +133,33 @@ impl<'a> TryFrom<BindSlot<'a>> for BindingResource<'a> {
     fn try_from(value: BindSlot<'a>) -> Result<Self, Self::Error> {
         macro_rules! get_reqt {
             ($slot:expr, $binding:expr, $constructor:expr) => {
-                match $slot {
+                match $slot.borrow_mut().take() {
                     Some(s) => Ok($constructor(s)),
-                    None => Err(Self::Error::MissingBindGroupEntry($binding)),
+                    None => Err(Self::Error::MissingBindGroupEntry($binding.0, $binding.1)),
                 }
             };
         }
 
         match value {
-            BindSlot::StorageBuffer { binding, slot }
-            | BindSlot::UniformBuffer { binding, slot } => {
-                get_reqt!(slot, binding, BindingResource::Buffer)
+            BindSlot::StorageBuffer { loc, slot, .. }
+            | BindSlot::UniformBuffer { loc, slot, .. } => {
+                get_reqt!(slot, loc, BindingResource::Buffer)
             }
-            BindSlot::Texture { binding, slot } => {
-                get_reqt!(slot, binding, BindingResource::TextureView)
+            BindSlot::Texture { loc, slot, .. } => {
+                get_reqt!(slot, loc, BindingResource::TextureView)
             }
-            BindSlot::Sampler { binding, slot } => {
-                get_reqt!(slot, binding, BindingResource::Sampler)
+            BindSlot::Sampler { loc, slot, .. } => {
+                get_reqt!(slot, loc, BindingResource::Sampler)
             }
-            BindSlot::StorageBufferArray { binding, slots, .. }
-            | BindSlot::UniformBufferArray { binding, slots, .. } => {
-                get_reqt!(slots, binding, BindingResource::BufferArray)
+            BindSlot::StorageBufferArray { loc, slots, .. }
+            | BindSlot::UniformBufferArray { loc, slots, .. } => {
+                get_reqt!(slots, loc, BindingResource::BufferArray)
             }
-            BindSlot::TextureArray { binding, slots, .. } => {
-                get_reqt!(slots, binding, BindingResource::TextureViewArray)
+            BindSlot::TextureArray { loc, slots, .. } => {
+                get_reqt!(slots, loc, BindingResource::TextureViewArray)
             }
-            BindSlot::SamplerArray { binding, slots, .. } => {
-                get_reqt!(slots, binding, BindingResource::SamplerArray)
+            BindSlot::SamplerArray { loc, slots, .. } => {
+                get_reqt!(slots, loc, BindingResource::SamplerArray)
             }
         }
     }

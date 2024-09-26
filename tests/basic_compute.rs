@@ -27,7 +27,7 @@ void main() {}
 #[test]
 fn basic_reflection() {
     let source = compute_stage(BASIC_SRC);
-    let refl = ComputeReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflector::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -49,7 +49,7 @@ fn basic_reflection() {
     let ranges = refl.push_constant_range().unwrap();
     let not_desc = refl.get_bind_group_layout_entry(0, 1);
 
-    assert_eq!(pc_range, ranges);
+    assert_eq!(&[pc_range], ranges);
     assert_eq!(binding_0, desc);
     assert!(not_desc.is_none());
 
@@ -81,7 +81,7 @@ void main() {}
 #[test]
 fn storage_buffer_reflection() {
     let source = compute_stage(STORAGE_BUFFER_SRC);
-    let refl = ComputeReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflector::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -123,7 +123,7 @@ void main() {}
 #[test]
 fn multiple_bindings_reflection() {
     let source = compute_stage(MULTIPLE_BINDINGS_SRC);
-    let refl = ComputeReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflector::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -195,7 +195,7 @@ void main() {}
 #[test]
 fn storage_texture_reflection() {
     let source = compute_stage(STORAGE_TEXTURE_SRC);
-    let refl = ComputeReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflector::new_compute(source).unwrap();
 
     let binding_0 = wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -273,7 +273,7 @@ void main() {}
 fn storage_buffer_reflection_test() {
     let source = compute_stage(STORAGE_BUFFER_TEST_SRC);
 
-    let refl = ComputeReflectionContext::new_compute(source).unwrap();
+    let refl = ComputeReflector::new_compute(source).unwrap();
 
     let input_binding = wgpu::BindGroupLayoutEntry {
         binding: 0,

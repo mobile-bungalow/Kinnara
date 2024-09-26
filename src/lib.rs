@@ -1,16 +1,15 @@
 mod bind_group;
 mod preprocessing;
+mod traits;
 mod wgpu_utils;
 
-use std::marker::PhantomData;
-
-pub use bind_group::requirements::BindSlot;
+pub use bind_group::requirements::{BindSlot, PassSlot};
 use bind_group::BindGroups;
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupEntry, BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor,
-    ErrorFilter, PipelineCache, ShaderModuleDescriptor, ShaderSource,
+    ErrorFilter, ShaderModuleDescriptor, ShaderSource,
 };
 pub use wgpu_utils::DeviceUtils;
 
@@ -44,47 +43,189 @@ impl From<wgpu::Error> for Error {
     }
 }
 
+// Question: should these generics be moved into a trait which
+// can be derived that auto implements the the access and setup functions?
 // TODO: trait bounds on the push constant type
 // TODO: trait bounds on binding type
-pub struct RailedComputePipeline<PC = (), BT = ()> {
+pub struct UnboundComputePipeline {
     pipeline: wgpu::ComputePipeline,
-    bind_groups: Vec<wgpu::BindGroup>,
-    reflection_ctx: ComputeReflectionContext,
-    push_constants: Option<PC>,
-    binding_type: PhantomData<BT>,
+    reflection_ctx: ComputeReflector,
+    entry_point: String,
 }
 
-impl RailedComputePipeline {
-    pub fn set_up<'a, F>(
-        entry_point: &str,
-        context: ComputeReflectionContext,
-        bind_func: F,
-    ) -> Result<Self, Error>
-    where
-        F: FnMut(u32, &mut bind_group::requirements::BindSlot<'a>),
-    {
-        todo!("build out the railed usage.")
+pub struct BoundComputePipeline {
+    pipeline: wgpu::ComputePipeline,
+    //TODO: DYNAMIC OFFSETS
+    bind_groups: Vec<wgpu::BindGroup>,
+    reflection_ctx: ComputeReflector,
+    entry_point: String,
+}
+
+impl BoundComputePipeline {
+    pub fn unbind(self) -> UnboundComputePipeline {
+        let Self {
+            pipeline,
+            entry_point,
+            reflection_ctx,
+            ..
+        } = self;
+
+        UnboundComputePipeline {
+            pipeline,
+            reflection_ctx,
+            entry_point,
+        }
     }
 
     pub fn rebind() {
-        todo!()
+        todo!();
     }
 
-    pub fn create_compute_pass() {
-        todo!()
+    pub fn derail(self) -> (wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
+        let Self {
+            pipeline,
+            bind_groups,
+            ..
+        } = self;
+
+        (pipeline, bind_groups)
+    }
+
+    // Slots, dynamic offsets, push constants
+    pub fn create_pass<'a, 'b, F>(
+        &self,
+        enc: &'a mut wgpu::CommandEncoder,
+        mut pass_func: F,
+    ) -> Result<wgpu::ComputePass<'a>, Error>
+    where
+        F: FnMut(&bind_group::requirements::PassSlot<'b>),
+    {
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&self.pipeline);
+
+        // TODO: these functions are crazy please
+        // for the love of god shrink and simplify
+        if let Some(pc_ranges) = self.reflection_ctx.push_constant_range() {
+            for range in pc_ranges {
+                let mut pc_out = PassSlot::PushConstantRange {
+                    range: range.range.clone(),
+                    buffer: None.into(),
+                };
+
+                pass_func(&mut pc_out);
+
+                let PassSlot::PushConstantRange { buffer, .. } = pc_out else {
+                    unreachable!()
+                };
+
+                if let Some(slice) = buffer.into_inner() {
+                    // TODO: chain push constants when it makes sense
+                    // the offset should be nonzero
+                    pass.set_push_constants(0, slice);
+                } else {
+                    todo!("throw an error");
+                }
+            }
+        }
+
+        for (set, group) in self.bind_groups.iter().enumerate() {
+            let mut offsets = vec![];
+
+            for ent in self.reflection_ctx.iter_bind_group_entries(set as u32) {
+                if matches!(
+                    ent.ty,
+                    wgpu::BindingType::Buffer {
+                        has_dynamic_offset: true,
+                        ..
+                    }
+                ) {
+                    let mut offset = PassSlot::DynamicOffset {
+                        loc: (set as u32, ent.binding),
+                        offset: None.into(),
+                    };
+
+                    pass_func(&mut offset);
+
+                    let PassSlot::DynamicOffset { offset, .. } = offset else {
+                        unreachable!()
+                    };
+
+                    //TODO deal with this unwrao, test this
+                    offsets.push(offset.take().unwrap())
+                }
+            }
+            pass.set_bind_group(set as u32, group, &offsets);
+        }
+
+        Ok(pass)
+    }
+}
+
+impl UnboundComputePipeline {
+    pub fn new(
+        device: &wgpu::Device,
+        entry_point: &str,
+        options: wgpu::PipelineCompilationOptions,
+        mut context: ComputeReflector,
+    ) -> Result<Self, Error> {
+        let pipeline = context.create_compute_pipeline(entry_point, device, options)?;
+
+        Ok(Self {
+            pipeline,
+            reflection_ctx: context,
+            entry_point: entry_point.to_owned(),
+        })
+    }
+
+    pub fn work_group_size(&self) -> Option<[u32; 3]> {
+        self.reflection_ctx.work_group_size(&self.entry_point)
+    }
+
+    pub fn bind<'a, F>(
+        self,
+        device: &wgpu::Device,
+        mut bind_func: F,
+    ) -> Result<BoundComputePipeline, Error>
+    where
+        F: FnMut(&bind_group::requirements::BindSlot<'a>),
+    {
+        let Self {
+            pipeline,
+            reflection_ctx,
+            entry_point,
+        } = self;
+
+        let bg_ct = reflection_ctx.bind_group_count() as u32;
+
+        let bind_groups: Vec<_> = (0..=bg_ct)
+            .map(|set| reflection_ctx.create_bind_group(device, set, &mut bind_func))
+            .collect::<Option<_>>()
+            .expect("i'm going to deal with this later");
+
+        Ok(BoundComputePipeline {
+            pipeline,
+            bind_groups,
+            reflection_ctx,
+            entry_point,
+        })
     }
 }
 
 /// A structure holding user enriched reflection info and book keeping
 /// utilities on a given shader, derived from it's source.
-pub struct ComputeReflectionContext {
+#[derive(Debug, Clone)]
+pub struct ComputeReflector {
     bind_groups: BindGroups,
     naga_mod: wgpu::naga::Module,
-    pub build_cache: Option<PipelineCache>,
+    //pub build_cache: Option<PipelineCache>,
 }
 
 // TODO: Add Pixel reflection context
-impl ComputeReflectionContext {
+impl ComputeReflector {
     pub fn new_compute(source: wgpu::ShaderSource) -> Result<Self, Error> {
         let (directives, modified_source) = preprocessing::process(&source)?;
 
@@ -113,7 +254,7 @@ impl ComputeReflectionContext {
         Ok(Self {
             bind_groups,
             naga_mod,
-            build_cache: None,
+            //build_cache: None,
         })
     }
 
@@ -125,8 +266,11 @@ impl ComputeReflectionContext {
         self.bind_groups.entry_points()
     }
 
-    pub fn push_constant_range(&self) -> Option<wgpu::PushConstantRange> {
-        self.bind_groups.push_constant_range.clone()
+    pub fn push_constant_range<'a>(&'a self) -> Option<&'a [wgpu::PushConstantRange]> {
+        self.bind_groups
+            .push_constant_range
+            .as_ref()
+            .map(Vec::as_slice)
     }
 
     /// TODO: document the shit out of this, it's fairly opaque
@@ -140,7 +284,7 @@ impl ComputeReflectionContext {
         mut func: F,
     ) -> Option<wgpu::BindGroup>
     where
-        F: FnMut(&mut bind_group::requirements::BindSlot<'a>),
+        F: FnMut(&bind_group::requirements::BindSlot<'a>),
     {
         let layout = self.create_bind_group_layout(device, set);
 
@@ -149,7 +293,7 @@ impl ComputeReflectionContext {
             .get_bind_group_layout_entries(set)
             .iter()
             .map(|entry| {
-                let mut req = BindSlot::from_entry(entry);
+                let mut req = BindSlot::from_entry(set, entry);
                 func(&mut req);
                 let resource = wgpu::BindingResource::try_from(req).ok()?;
                 Some(BindGroupEntry {
@@ -179,18 +323,18 @@ impl ComputeReflectionContext {
             source: ShaderSource::Naga(std::borrow::Cow::Owned(self.naga_mod.clone())),
         };
 
-        let is_cache_capable = device.features().contains(wgpu::Features::PIPELINE_CACHE);
+        //let is_cache_capable = device.features().contains(wgpu::Features::PIPELINE_CACHE);
 
-        if is_cache_capable && self.build_cache.is_none() {
-            let desc = wgpu::PipelineCacheDescriptor {
-                label: None,
-                data: None,
-                fallback: true,
-            };
-            unsafe {
-                self.build_cache = Some(device.create_pipeline_cache(&desc));
-            }
-        }
+        // if is_cache_capable && self.build_cache.is_none() {
+        //     let desc = wgpu::PipelineCacheDescriptor {
+        //         label: None,
+        //         data: None,
+        //         fallback: true,
+        //     };
+        //     unsafe {
+        //         self.build_cache = Some(device.create_pipeline_cache(&desc));
+        //     }
+        // }
 
         let layout = self.create_pipeline_layout(device);
 
@@ -203,7 +347,7 @@ impl ComputeReflectionContext {
                     module: &module,
                     entry_point,
                     compilation_options: options,
-                    cache: self.build_cache.as_ref(),
+                    cache: None, // self.build_cache.as_ref(),
                 };
 
                 dev.create_compute_pipeline(&pipeline_desc)
@@ -212,9 +356,7 @@ impl ComputeReflectionContext {
     }
 
     pub fn create_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
-        let push_constant_range = &self
-            .push_constant_range()
-            .map_or(vec![], |r| vec![r.clone()]);
+        let push_constant_range = &self.push_constant_range().unwrap_or(&[]);
 
         let bind_groups_ct = self.bind_groups.bind_group_count();
         let bind_group_layouts: Vec<_> = (0..=bind_groups_ct)
@@ -255,6 +397,13 @@ impl ComputeReflectionContext {
 
     pub fn bind_group_entries_count(&self, set: u32) -> usize {
         self.bind_groups.bind_group_entries_count(set)
+    }
+
+    pub fn iter_bind_group_entries(
+        &self,
+        set: u32,
+    ) -> impl Iterator<Item = &wgpu::BindGroupLayoutEntry> {
+        self.bind_groups.iter_bind_group_entries(set)
     }
 
     pub fn get_bind_group_layout_entry(

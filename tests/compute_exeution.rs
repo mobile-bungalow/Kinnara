@@ -1,4 +1,4 @@
-use kinnara::{ComputeReflectionContext, DeviceUtils};
+use kinnara::{BindSlot, ComputeReflector, DeviceUtils, PassSlot, UnboundComputePipeline};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::BufferUsages;
 
@@ -25,7 +25,7 @@ fn addition() -> Result<(), kinnara::Error> {
     let (device, queue) = set_up_wgpu();
     let source = compute_stage(BASIC_EXEC);
 
-    let mut refl = ComputeReflectionContext::new_compute(source)?;
+    let mut refl = ComputeReflector::new_compute(source)?;
     let wg_size = refl.work_group_size("main").unwrap();
     let compute_pipeline = refl.create_compute_pipeline("main", &device, Default::default())?;
 
@@ -45,8 +45,10 @@ fn addition() -> Result<(), kinnara::Error> {
     });
 
     let bind_group = refl
-        .create_bind_group(&device, 0, |req| if let kinnara::BindSlot::StorageBuffer { binding: 0, slot } = req {
-            slot.replace(buffer.as_entire_buffer_binding());
+        .create_bind_group(&device, 0, |req| {
+            if let BindSlot::StorageBuffer { loc: (0, 0), slot } = req {
+                slot.borrow_mut().replace(buffer.as_entire_buffer_binding());
+            }
         })
         .unwrap();
 
@@ -79,59 +81,68 @@ fn addition() -> Result<(), kinnara::Error> {
     Ok(())
 }
 
-//#[test]
-//fn addition_next() -> Result<(), kinnara::Error> {
-//    let (device, queue) = set_up_wgpu();
-//    let source = compute_stage(BASIC_EXEC);
-//
-//    let mut refl = ComputeReflectionContext::new_compute(source)?;
-//
-//    let length = 1048576;
-//    let add = 5.0f32;
-//    let data: Vec<_> = (0..length).flat_map(|i| (i as f32).to_le_bytes()).collect();
-//
-//    let buffer = device.create_buffer_init(&BufferInitDescriptor {
-//        label: None,
-//        // TODO: reflector should be able to provide minimum viable flags
-//        usage: BufferUsages::UNIFORM
-//            | BufferUsages::MAP_READ
-//            | BufferUsages::COPY_DST
-//            | BufferUsages::STORAGE,
-//        // TODO: be able to provide the data for this through a serde json like object
-//        contents: &data,
-//    });
-//
-//    let railed = RailedComputePipeline::set_up("main", refl, |set, slot| match (set, slot) {
-//        (0, kinnara::BindSlot::StorageBuffer { binding: 0, slot }) => {
-//            slot.replace(buffer.as_entire_buffer_binding());
-//        }
-//        _ => {}
-//    })?;
-//
-//    let wg_size = railed.work_group_size("main").unwrap();
-//
-//    let mut encoder = device.create_command_encoder(&Default::default());
-//    {
-//        let mut cpass = railed.begin_compute_pass(&Default::default(), add);
-//        cpass.dispatch_workgroups(length / wg_size[0], wg_size[1], wg_size[2]);
-//    }
-//
-//    queue.submit([encoder.finish()]);
-//
-//    let result_floats: Vec<_> = device.buffer_view(&buffer, |slice| {
-//        slice
-//            .unwrap()
-//            .chunks_exact(4)
-//            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-//            .collect()
-//    });
-//
-//    for (i, &value) in result_floats.iter().enumerate() {
-//        assert_eq!(value, (i as f32 + add), "Mismatch at index {}", i);
-//    }
-//
-//    Ok(())
-//}
+#[test]
+fn addition_next() -> Result<(), kinnara::Error> {
+    let (device, queue) = set_up_wgpu();
+    let source = compute_stage(BASIC_EXEC);
+
+    let refl = ComputeReflector::new_compute(source)?;
+
+    let length = 1048576;
+    let add = 5.0f32;
+    let data: Vec<_> = (0..length).flat_map(|i| (i as f32).to_le_bytes()).collect();
+
+    let buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: None,
+        // TODO: reflector should be able to provide minimum viable flags
+        usage: BufferUsages::UNIFORM
+            | BufferUsages::MAP_READ
+            | BufferUsages::COPY_DST
+            | BufferUsages::STORAGE,
+        // TODO: be able to provide the data for this through a serde json like object
+        contents: &data,
+    });
+
+    let railed = UnboundComputePipeline::new(&device, "main", Default::default(), refl)?;
+    let wg_size = railed.work_group_size().unwrap();
+
+    let bound_pipline = railed.bind(&device, |slot| match slot {
+        BindSlot::StorageBuffer { loc: (0, 0), slot } => {
+            slot.borrow_mut().replace(buffer.as_entire_buffer_binding());
+        }
+        _ => {}
+    })?;
+
+    let push_slice = add.to_le_bytes();
+    let mut encoder = device.create_command_encoder(&Default::default());
+
+    {
+        let mut cpass = bound_pipline.create_pass(&mut encoder, |req| match req {
+            //TODO: TYPE SAFETY HERE
+            PassSlot::PushConstantRange { buffer, .. } => {
+                buffer.borrow_mut().replace(&push_slice);
+            }
+            _ => {}
+        })?;
+        cpass.dispatch_workgroups(length / wg_size[0], wg_size[1], wg_size[2]);
+    }
+
+    queue.submit([encoder.finish()]);
+
+    let result_floats: Vec<_> = device.buffer_view(&buffer, |slice| {
+        slice
+            .unwrap()
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
+    });
+
+    for (i, &value) in result_floats.iter().enumerate() {
+        assert_eq!(value, (i as f32 + add), "Mismatch at index {}", i);
+    }
+
+    Ok(())
+}
 
 fn compute_stage(src: &str) -> wgpu::ShaderSource {
     wgpu::ShaderSource::Glsl {

@@ -4,10 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["glsl", "wgsl"]
+default = ["glsl", "wgsl", "encase"]
 glsl = ["wgpu/glsl"]
 wgsl = ["wgpu/wgsl"]
 
+
+[dependencies.encase]
+version = "0.10.0"
+optional = true
 
 [dependencies.derive_more]
 version = "1.0.0"

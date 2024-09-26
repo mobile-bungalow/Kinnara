@@ -15,12 +15,16 @@ impl DeviceUtils for wgpu::Device {
     where
         F: FnOnce(&wgpu::Device) -> T,
     {
-        self.push_error_scope(filter);
+        //TODO: Naga PANICS! when the validation error is non-global.
+        // this makes this utility aggravating.
+
+        //self.push_error_scope(filter);
         let result = func(self);
-        match self.pop_error_scope().block_on() {
-            Some(error) => Err(error),
-            None => Ok(result),
-        }
+        //match self.pop_error_scope().block_on() {
+        //    Some(error) => Err(dbg!(error)),
+        //    None => Ok(result),
+        //}
+        Ok(result)
     }
 
     /// funs the function on Some(&[u8]) if it the buffer can be mapped,
