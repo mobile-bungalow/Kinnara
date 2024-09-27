@@ -117,8 +117,8 @@ fn addition_next() -> Result<(), kinnara::Error> {
     let mut encoder = device.create_command_encoder(&Default::default());
 
     {
+        //TODO: CHECK POINT TYPE SAFETY HERE
         let mut cpass = bound_pipline.create_pass(&mut encoder, |req| match req {
-            //TODO: TYPE SAFETY HERE
             PassSlot::PushConstantRange { buffer, .. } => {
                 buffer.borrow_mut().replace(&push_slice);
             }

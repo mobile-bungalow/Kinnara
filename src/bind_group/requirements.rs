@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use std::cell::RefCell;
-use wgpu::{BindGroupLayoutEntry, BindingResource};
+use wgpu::{BindGroupLayoutEntry, BindingResource, PushConstantRange};
 
 pub enum PassSlot<'a> {
     DynamicOffset {
@@ -9,9 +9,48 @@ pub enum PassSlot<'a> {
         offset: RefCell<Option<u32>>,
     },
     PushConstantRange {
+        visibility: wgpu::ShaderStages,
         range: std::ops::Range<u32>,
         buffer: RefCell<Option<&'a [u8]>>,
     },
+}
+
+impl<'a> From<&PushConstantRange> for PassSlot<'a> {
+    fn from(value: &PushConstantRange) -> Self {
+        Self::PushConstantRange {
+            visibility: value.stages,
+            range: value.range.clone(),
+            buffer: None.into(),
+        }
+    }
+}
+
+impl<'a> PassSlot<'a> {
+    // this may need offsets later, unlikely.
+    // the use case for push constants is %99.9
+    // all at once.
+    pub fn push_const_slice(self) -> Option<(u32, &'a [u8])> {
+        match self {
+            PassSlot::PushConstantRange { buffer, range, .. } => {
+                Some((range.start, buffer.take()?))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn offset_for(set: u32, binding: u32) -> Self {
+        Self::DynamicOffset {
+            loc: (set, binding),
+            offset: None.into(),
+        }
+    }
+
+    pub fn offset(self) -> Option<u32> {
+        match self {
+            PassSlot::DynamicOffset { offset, .. } => offset.take(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]

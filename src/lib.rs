@@ -9,7 +9,7 @@ use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupEntry, BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor,
-    ErrorFilter, ShaderModuleDescriptor, ShaderSource,
+    ErrorFilter, PushConstantRange, ShaderModuleDescriptor, ShaderSource,
 };
 pub use wgpu_utils::DeviceUtils;
 
@@ -31,6 +31,11 @@ pub enum Error {
     BindGroupError(#[from] bind_group::BindGroupError),
     #[error("Preprocessing Error : {0}")]
     PreprocessingError(#[from] preprocessing::PreprocessingError),
+    //TODO: make this error prettier
+    #[error(
+        "Incomplete Pass : missing dynaic offset information for {0:?} , and push constants for {1:?}"
+    )]
+    PassConstruction(Vec<(u32, u32)>, Vec<wgpu::ShaderStages>),
 }
 
 impl From<wgpu::Error> for Error {
@@ -77,7 +82,14 @@ impl BoundComputePipeline {
         }
     }
 
-    pub fn rebind() {
+    pub fn rebind<'a, F>(
+        &mut self,
+        device: &wgpu::Device,
+        mut bind_func: F,
+    ) -> Result<BoundComputePipeline, Error>
+    where
+        F: FnMut(&bind_group::requirements::BindSlot<'a>),
+    {
         todo!();
     }
 
@@ -105,59 +117,50 @@ impl BoundComputePipeline {
             timestamp_writes: None,
         });
 
-        pass.set_pipeline(&self.pipeline);
+        let mut pc_range_errors = vec![];
+        let mut pc_ranges = vec![];
 
-        // TODO: these functions are crazy please
-        // for the love of god shrink and simplify
-        if let Some(pc_ranges) = self.reflection_ctx.push_constant_range() {
-            for range in pc_ranges {
-                let mut pc_out = PassSlot::PushConstantRange {
-                    range: range.range.clone(),
-                    buffer: None.into(),
-                };
-
-                pass_func(&mut pc_out);
-
-                let PassSlot::PushConstantRange { buffer, .. } = pc_out else {
-                    unreachable!()
-                };
-
-                if let Some(slice) = buffer.into_inner() {
-                    // TODO: chain push constants when it makes sense
-                    // the offset should be nonzero
-                    pass.set_push_constants(0, slice);
-                } else {
-                    todo!("throw an error");
+        if let Some(reflected_ranges) = self.reflection_ctx.push_constant_range() {
+            for range in reflected_ranges {
+                let pc_out = PassSlot::from(range);
+                pass_func(&pc_out);
+                match pc_out.push_const_slice() {
+                    Some(pc) => pc_ranges.push(pc),
+                    None => pc_range_errors.push(range.stages),
                 }
             }
         }
+
+        let mut bg_and_offsets = vec![];
+        let mut errors = vec![];
 
         for (set, group) in self.bind_groups.iter().enumerate() {
             let mut offsets = vec![];
 
             for ent in self.reflection_ctx.iter_bind_group_entries(set as u32) {
-                if matches!(
-                    ent.ty,
-                    wgpu::BindingType::Buffer {
-                        has_dynamic_offset: true,
-                        ..
+                if ent.ty.has_dynamic_offset() {
+                    let dyn_offset = PassSlot::offset_for(set as u32, ent.binding);
+                    pass_func(&dyn_offset);
+                    match dyn_offset.offset() {
+                        Some(offset) => offsets.push(offset),
+                        None => errors.push((set as u32, ent.binding)),
                     }
-                ) {
-                    let mut offset = PassSlot::DynamicOffset {
-                        loc: (set as u32, ent.binding),
-                        offset: None.into(),
-                    };
-
-                    pass_func(&mut offset);
-
-                    let PassSlot::DynamicOffset { offset, .. } = offset else {
-                        unreachable!()
-                    };
-
-                    //TODO deal with this unwrao, test this
-                    offsets.push(offset.take().unwrap())
                 }
             }
+            bg_and_offsets.push((set, group, offsets));
+        }
+
+        if !errors.is_empty() || !pc_range_errors.is_empty() {
+            return Err(Error::PassConstruction(errors, pc_range_errors));
+        }
+
+        pass.set_pipeline(&self.pipeline);
+
+        for (offset, data) in pc_ranges {
+            pass.set_push_constants(offset, data);
+        }
+
+        for (set, group, offsets) in bg_and_offsets {
             pass.set_bind_group(set as u32, group, &offsets);
         }
 
@@ -293,8 +296,8 @@ impl ComputeReflector {
             .get_bind_group_layout_entries(set)
             .iter()
             .map(|entry| {
-                let mut req = BindSlot::from_entry(set, entry);
-                func(&mut req);
+                let req = BindSlot::from_entry(set, entry);
+                func(&req);
                 let resource = wgpu::BindingResource::try_from(req).ok()?;
                 Some(BindGroupEntry {
                     binding: entry.binding,
