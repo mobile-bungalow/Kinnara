@@ -9,7 +9,7 @@ use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupEntry, BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor,
-    ErrorFilter, PushConstantRange, ShaderModuleDescriptor, ShaderSource,
+    ErrorFilter, ShaderModuleDescriptor, ShaderSource,
 };
 pub use wgpu_utils::DeviceUtils;
 
@@ -85,7 +85,7 @@ impl BoundComputePipeline {
     pub fn rebind<'a, F>(
         &mut self,
         device: &wgpu::Device,
-        mut bind_func: F,
+        bind_func: F,
     ) -> Result<BoundComputePipeline, Error>
     where
         F: FnMut(&bind_group::requirements::BindSlot<'a>),
@@ -269,11 +269,9 @@ impl ComputeReflector {
         self.bind_groups.entry_points()
     }
 
-    pub fn push_constant_range<'a>(&'a self) -> Option<&'a [wgpu::PushConstantRange]> {
+    pub fn push_constant_range(&self) -> Option<&[wgpu::PushConstantRange]> {
         self.bind_groups
-            .push_constant_range
-            .as_ref()
-            .map(Vec::as_slice)
+            .push_constant_range.as_deref()
     }
 
     /// TODO: document the shit out of this, it's fairly opaque

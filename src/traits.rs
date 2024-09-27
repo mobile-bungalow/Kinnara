@@ -1,9 +1,9 @@
 pub trait PushConstant {
-    fn range<'a>(&'a self) -> (usize, &'a [u8]);
+    fn range(&self) -> (usize, &[u8]);
 }
 
 impl PushConstant for () {
-    fn range<'a>(&'a self) -> (usize, &'a [u8]) {
+    fn range(&self) -> (usize, &[u8]) {
         (0, &[])
     }
 }

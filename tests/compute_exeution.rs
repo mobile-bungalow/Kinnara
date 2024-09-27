@@ -106,11 +106,8 @@ fn addition_next() -> Result<(), kinnara::Error> {
     let railed = UnboundComputePipeline::new(&device, "main", Default::default(), refl)?;
     let wg_size = railed.work_group_size().unwrap();
 
-    let bound_pipline = railed.bind(&device, |slot| match slot {
-        BindSlot::StorageBuffer { loc: (0, 0), slot } => {
-            slot.borrow_mut().replace(buffer.as_entire_buffer_binding());
-        }
-        _ => {}
+    let bound_pipline = railed.bind(&device, |slot| if let BindSlot::StorageBuffer { loc: (0, 0), slot } = slot {
+        slot.borrow_mut().replace(buffer.as_entire_buffer_binding());
     })?;
 
     let push_slice = add.to_le_bytes();
@@ -118,11 +115,8 @@ fn addition_next() -> Result<(), kinnara::Error> {
 
     {
         //TODO: CHECK POINT TYPE SAFETY HERE
-        let mut cpass = bound_pipline.create_pass(&mut encoder, |req| match req {
-            PassSlot::PushConstantRange { buffer, .. } => {
-                buffer.borrow_mut().replace(&push_slice);
-            }
-            _ => {}
+        let mut cpass = bound_pipline.create_pass(&mut encoder, |req| if let PassSlot::PushConstantRange { buffer, .. } = req {
+            buffer.borrow_mut().replace(&push_slice);
         })?;
         cpass.dispatch_workgroups(length / wg_size[0], wg_size[1], wg_size[2]);
     }

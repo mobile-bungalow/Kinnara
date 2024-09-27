@@ -1,4 +1,3 @@
-use pollster::FutureExt as _;
 
 pub trait DeviceUtils {
     fn wgpu_try<T, F>(&self, filter: wgpu::ErrorFilter, func: F) -> Result<T, wgpu::Error>
