@@ -167,14 +167,14 @@ impl<'a> BindSlot<'a> {
 }
 
 impl<'a> TryFrom<BindSlot<'a>> for BindingResource<'a> {
-    type Error = super::BindGroupError;
+    type Error = (u32, u32);
 
-    fn try_from(value: BindSlot<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: BindSlot<'a>) -> Result<Self, (u32, u32)> {
         macro_rules! get_reqt {
             ($slot:expr, $binding:expr, $constructor:expr) => {
                 match $slot.borrow_mut().take() {
                     Some(s) => Ok($constructor(s)),
-                    None => Err(Self::Error::MissingBindGroupEntry($binding.0, $binding.1)),
+                    None => Err(($binding.0, $binding.1)),
                 }
             };
         }

@@ -3,15 +3,17 @@ mod preprocessing;
 mod traits;
 mod wgpu_utils;
 
-pub use bind_group::requirements::{BindSlot, PassSlot};
 use bind_group::BindGroups;
+
+pub use bind_group::requirements::{BindSlot, PassSlot};
+pub use wgpu_utils::DeviceUtils;
+
 use thiserror::Error;
 use wgpu::{
     naga::front::{self, glsl::ParseErrors as GlslParseError, wgsl::ParseError as WgslParseError},
     BindGroupEntry, BindGroupLayoutDescriptor, ComputePipeline, ComputePipelineDescriptor,
     ErrorFilter, ShaderModuleDescriptor, ShaderSource,
 };
-pub use wgpu_utils::DeviceUtils;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -36,6 +38,8 @@ pub enum Error {
         "Incomplete Pass : missing dynaic offset information for {0:?} , and push constants for {1:?}"
     )]
     PassConstruction(Vec<(u32, u32)>, Vec<wgpu::ShaderStages>),
+    #[error("Missing Bindings: bind groups missing {0:?}")]
+    MissingBindings(Vec<(u32, u32)>),
 }
 
 impl From<wgpu::Error> for Error {
@@ -60,7 +64,6 @@ pub struct UnboundComputePipeline {
 
 pub struct BoundComputePipeline {
     pipeline: wgpu::ComputePipeline,
-    //TODO: DYNAMIC OFFSETS
     bind_groups: Vec<wgpu::BindGroup>,
     reflection_ctx: ComputeReflector,
     entry_point: String,
@@ -82,15 +85,53 @@ impl BoundComputePipeline {
         }
     }
 
-    pub fn rebind<'a, F>(
+    pub fn rebind_set<'a, F>(
         &mut self,
         device: &wgpu::Device,
-        bind_func: F,
-    ) -> Result<BoundComputePipeline, Error>
+        set: u32,
+        mut bind_func: F,
+    ) -> Result<(), Error>
     where
         F: FnMut(&bind_group::requirements::BindSlot<'a>),
     {
-        todo!();
+        let group = self
+            .reflection_ctx
+            .create_bind_group(device, set, &mut bind_func)?;
+
+        self.bind_groups[set as usize] = group;
+
+        Ok(())
+    }
+
+    pub fn rebind_all<'a, F>(
+        &mut self,
+        device: &wgpu::Device,
+        mut bind_func: F,
+    ) -> Result<(), Error>
+    where
+        F: FnMut(&bind_group::requirements::BindSlot<'a>),
+    {
+        let mut bind_groups = vec![];
+        let mut missing = vec![];
+
+        let bg_ct = self.reflection_ctx.bind_group_count() as u32;
+        for set in 0..=bg_ct {
+            match self
+                .reflection_ctx
+                .create_bind_group(device, set, &mut bind_func)
+            {
+                Ok(group) => bind_groups.push(group),
+                Err(Error::MissingBindings(ent)) => missing.extend(ent),
+                _ => unreachable!(),
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(Error::MissingBindings(missing));
+        }
+
+        self.bind_groups = bind_groups;
+        Ok(())
     }
 
     pub fn derail(self) -> (wgpu::ComputePipeline, Vec<wgpu::BindGroup>) {
@@ -204,10 +245,20 @@ impl UnboundComputePipeline {
 
         let bg_ct = reflection_ctx.bind_group_count() as u32;
 
-        let bind_groups: Vec<_> = (0..=bg_ct)
-            .map(|set| reflection_ctx.create_bind_group(device, set, &mut bind_func))
-            .collect::<Option<_>>()
-            .expect("i'm going to deal with this later");
+        let mut bind_groups = vec![];
+        let mut missing = vec![];
+
+        for set in 0..=bg_ct {
+            match reflection_ctx.create_bind_group(device, set, &mut bind_func) {
+                Ok(group) => bind_groups.push(group),
+                Err(Error::MissingBindings(ent)) => missing.extend(ent),
+                _ => unreachable!(),
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(Error::MissingBindings(missing));
+        }
 
         Ok(BoundComputePipeline {
             pipeline,
@@ -224,7 +275,6 @@ impl UnboundComputePipeline {
 pub struct ComputeReflector {
     bind_groups: BindGroups,
     naga_mod: wgpu::naga::Module,
-    //pub build_cache: Option<PipelineCache>,
 }
 
 // TODO: Add Pixel reflection context
@@ -257,7 +307,6 @@ impl ComputeReflector {
         Ok(Self {
             bind_groups,
             naga_mod,
-            //build_cache: None,
         })
     }
 
@@ -270,8 +319,7 @@ impl ComputeReflector {
     }
 
     pub fn push_constant_range(&self) -> Option<&[wgpu::PushConstantRange]> {
-        self.bind_groups
-            .push_constant_range.as_deref()
+        self.bind_groups.push_constant_range.as_deref()
     }
 
     /// TODO: document the shit out of this, it's fairly opaque
@@ -283,34 +331,41 @@ impl ComputeReflector {
         device: &wgpu::Device,
         set: u32,
         mut func: F,
-    ) -> Option<wgpu::BindGroup>
+    ) -> Result<wgpu::BindGroup, Error>
     where
         F: FnMut(&bind_group::requirements::BindSlot<'a>),
     {
         let layout = self.create_bind_group_layout(device, set);
 
-        let entries = self
+        let (good, bad): (Vec<_>, _) = self
             .bind_groups
             .get_bind_group_layout_entries(set)
             .iter()
             .map(|entry| {
                 let req = BindSlot::from_entry(set, entry);
                 func(&req);
-                let resource = wgpu::BindingResource::try_from(req).ok()?;
-                Some(BindGroupEntry {
+                let resource = wgpu::BindingResource::try_from(req)?;
+                Ok(BindGroupEntry {
                     binding: entry.binding,
                     resource,
                 })
             })
-            .collect::<Option<Vec<_>>>()?;
+            .partition(|e| e.is_ok());
+
+        if !bad.is_empty() {
+            let res: Vec<_> = bad.into_iter().filter_map(Result::err).collect();
+            return Err(Error::MissingBindings(res));
+        }
+
+        let good: Vec<_> = good.into_iter().collect::<Result<_, _>>().unwrap();
 
         let desc = wgpu::BindGroupDescriptor {
             label: None,
             layout: &layout,
-            entries: entries.as_slice(),
+            entries: good.as_slice(),
         };
 
-        Some(device.create_bind_group(&desc))
+        Ok(device.create_bind_group(&desc))
     }
 
     pub fn create_compute_pipeline(
@@ -324,19 +379,6 @@ impl ComputeReflector {
             source: ShaderSource::Naga(std::borrow::Cow::Owned(self.naga_mod.clone())),
         };
 
-        //let is_cache_capable = device.features().contains(wgpu::Features::PIPELINE_CACHE);
-
-        // if is_cache_capable && self.build_cache.is_none() {
-        //     let desc = wgpu::PipelineCacheDescriptor {
-        //         label: None,
-        //         data: None,
-        //         fallback: true,
-        //     };
-        //     unsafe {
-        //         self.build_cache = Some(device.create_pipeline_cache(&desc));
-        //     }
-        // }
-
         let layout = self.create_pipeline_layout(device);
 
         device
@@ -348,7 +390,7 @@ impl ComputeReflector {
                     module: &module,
                     entry_point,
                     compilation_options: options,
-                    cache: None, // self.build_cache.as_ref(),
+                    cache: None,
                 };
 
                 dev.create_compute_pipeline(&pipeline_desc)
